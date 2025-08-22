@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Route with Elevation Change Indicator</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/@rive-app/webgl2"></script>
+
+  <style>
+    html, body {
+      margin: 0; padding: 0; height: 100vh;
+      background: transparent;
+      overflow: hidden;
+      user-select: none;
+      font-family: 'Inter', sans-serif;
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #container {
+      position: relative;
+      width: 834px;
+      height: 1080px;
+      max-width: 90vw;
+      max-height: 90vh;
+      cursor: crosshair;
+    }
+
+    #rive-canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 1;
+      border-radius: 8px;
+    }
+
+    #interaction-blocker {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 2;
+      pointer-events: none;
+      background: transparent;
+    }
+    #interaction-blocker.active {
+      pointer-events: all;
+    }
+
+    .marker {
+      position: absolute;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+      z-index: 10;
+      opacity: 1;
+      transition: opacity 700ms ease;
+      pointer-events: none;
+    }
+    .marker.start { background-color: #ffee04; }
+    .marker.end { background-color: #ff0000; }
+
+    svg#line-overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    path.route-line {
+      stroke: url(#routeGradient);
+      stroke-width: 4;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 1;
+      transition: opacity 700ms ease;
+      stroke-dasharray: 0;
+      stroke-dashoffset: 0;
+      filter: drop-shadow(1px 1px 6px rgba(0, 0, 0, 0.7));
+    }
+
+    #location-title {
+      position: absolute;
+      top: 14px; left: 50%;
+      transform: translateX(-50%);
+      font-weight: 400;
+      font-size: 12pt;
+      letter-spacing: 1pt;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 8px;
+      z-index: 25;
+      pointer-events: none;
+      user-select: none;
+      text-align: center;
+    }
+
+    #elevation-background {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 100px;
+      background: transparent;
+      opacity: 0;
+      transition: opacity 500ms ease;
+      z-index: 15;
+      pointer-events: none;
+      border-radius: 0 0 8px 8px;
+    }
+
+    #elevation-display {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: transparent;
+      padding: 10px 40px;
+      border-radius: 10px;
+      display: flex;
+      gap: 0;
+      opacity: 0;
+      transition: opacity 500ms ease;
+      z-index: 20;
+      white-space: nowrap;
+      pointer-events: none;
+      align-items: flex-start;
+    }
+
+    .elevation-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      min-width: 90px;
+      line-height: 1.1;
+    }
+
+    .elevation-value {
+      font-weight: 700;
+      font-style: italic;
+      font-size: 14pt;
+      letter-spacing: .58pt;
+      color: rgb(255, 255, 255);
+      line-height: 1.1;
+      margin-bottom: 6px;
+      white-space: nowrap;
+    }
+    #start-value { color: #ffee04; }
+    #end-value { color: #e40101; }
+
+    .elevation-label {
+      font-weight: 400;
+      font-size: 12pt;
+      letter-spacing: 0.5pt;
+      text-transform: uppercase;
+      line-height: 1.1;
+    }
+    #start-label { color: #ffee04; }
+    #end-label { color: #e40101; }
+
+    .divider {
+      width: 1.23px;
+      background-color: rgba(255, 255, 255, 0.4);
+      margin: 0 70px;
+      align-self: stretch;
+      max-height: 45px;
+    }
+
+    #static-gps {
+      position: fixed;
+      pointer-events: none;
+      user-select: none;
+      white-space: nowrap;
+      font-family: 'IBM Plex Mono', monospace;
+      font-weight: 400;
+      font-size: 10pt;
+      color: white;
+      background: rgba(0, 0, 0, 0.35);
+      padding: 2px 6px;
+      border-radius: 4px;
+      z-index: 100;
+      top: 0;
+      left: 0;
+      transform: translate(-50%, -120%);
+      transition: opacity 300ms ease;
+      opacity: 1;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="container">
+    <canvas id="rive-canvas" width="834" height="1080"></canvas>
+    <div id="interaction-blocker"></div>
+    <div id="location-title">YOSEMITE VALLEY</div>
+    <svg id="line-overlay" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="routeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" style="stop-color:#ffee04;stop-opacity:1" />
+          <stop offset="15%" style="stop-color:#fb8e00;stop-opacity:1" />
+          <stop offset="85%" style="stop-color:#fb8e00;stop-opacity:1" />
+          <stop offset="100%" style="stop-color:#ff0000;stop-opacity:1" />
+        </linearGradient>
+      </defs>
+      <path id="route-path" class="route-line" />
+    </svg>
+    <div id="elevation-background"></div>
+    <div id="elevation-display">
+      <div class="elevation-box" id="elev-start">
+        <span class="elevation-value" id="start-value">0 ft</span>
+        <span class="elevation-label" id="start-label">START</span>
+      </div>
+      <div class="divider"></div>
+      <div class="elevation-box" id="elev-change">
+        <span class="elevation-value" id="change-value">+0 ft</span>
+        <span class="elevation-label">ELEVATION CHANGE</span>
+      </div>
+      <div class="divider"></div>
+      <div class="elevation-box" id="elev-end">
+        <span class="elevation-value" id="end-value">0 ft</span>
+        <span class="elevation-label" id="end-label">END</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="static-gps">Loading GPS...</div>
+
+  <script>
+    let r; // Rive instance
+    let resetInProgress = false;
+
+    r = new rive.Rive({
+      src: 'topographer.riv',
+      canvas: document.getElementById('rive-canvas'),
+      autoplay: true,
+      autoBind: true,
+      artboard: 'Main',
+      stateMachines: 'State Machine 1',
+      onLoad: () => {
+        r.viewModelInstance.boolean('isChecked');
+        r.resizeDrawingSurfaceToCanvas();
+      }
+    });
+
+    const container = document.getElementById('container');
+    const path = document.getElementById('route-path');
+    const elevationBackground = document.getElementById('elevation-background');
+    const elevationDisplay = document.getElementById('elevation-display');
+    const gpsDisplay = document.getElementById('static-gps');
+    const interactionBlocker = document.getElementById('interaction-blocker');
+
+    let start = null;
+    let end = null;
+    let isShowingElevation = false;
+    let startMarkerElement = null;
+    let endMarkerElement = null;
+    let isWaitingForSecondMarker = false;
+
+    let mapOffset = { x: 0, y: 0 };
+    let mapScale = 1;
+    let startMapPosition = null;
+    let endMapPosition = null;
+
+    const MOVEMENT_THRESHOLD = 5;
+    const CLICK_TIME_THRESHOLD = 500;
+
+    const CANVAS_WIDTH = 834;
+    const CANVAS_HEIGHT = 1080;
+    const HORIZONTAL_OFFSET = (1500 - CANVAS_WIDTH) / 2;
+    const VERTICAL_OFFSET = (1500 - CANVAS_HEIGHT) / 2;
+
+    // Define the blocked area - from bottom extending up to above elevation display
+    const BLOCKED_AREA_HEIGHT = 130; // Height from bottom that's blocked for marker placement
+
+    const MAP_CONFIG = {
+      realWorldBounds: {
+        north: 37.806,
+        south: 37.716,
+        west: -119.618,
+        east: -119.5236
+      },
+      imageWidth: 1500,
+      imageHeight: 1500,
+      get latSpan() { return this.realWorldBounds.north - this.realWorldBounds.south; },
+      get lonSpan() { return this.realWorldBounds.east - this.realWorldBounds.west; },
+      knownLandmarks: [
+        { name: "Yosemite Village", realGPS: { lat: 37.7490, lon: -119.6133 }, elevation: 3960 },
+        { name: "Sentinel Dome", realGPS: { lat: 37.724711210276695, lon: -119.58383083986487 }, elevation: 8122 },
+        { name: "Half Dome", realGPS: { lat: 37.7459, lon: -119.5332 }, elevation: 8844 },
+        { name: "El Capitan", realGPS: { lat: 37.733952, lon: -119.637756 }, elevation: 7569 },
+        { name: "Curry Village", realGPS: { lat: 37.7380, lon: -119.5786 }, elevation: 4000 },
+        { name: "Bridalveil Fall", realGPS: { lat: 37.716667, lon: -119.65 }, elevation: 3200 },
+        { name: "Tunnel View", realGPS: { lat: 37.715833, lon: -119.677778 }, elevation: 4200 },
+        { name: "Glacier Point", realGPS: { lat: 37.731111, lon: -119.573333 }, elevation: 7214 }
+      ]
+    };
+
+    // Function to check if a position is in the blocked area
+    function isInBlockedArea(x, y) {
+      const containerHeight = container.offsetHeight;
+      const blockedTopY = containerHeight - BLOCKED_AREA_HEIGHT;
+      return y >= blockedTopY;
+    }
+
+    // Convert canvas coords to GPS
+    function pixelToGPS(canvasX, canvasY) {
+      const imageX = canvasX + HORIZONTAL_OFFSET;
+      const imageY = canvasY + VERTICAL_OFFSET;
+
+      const lonPercent = imageX / MAP_CONFIG.imageWidth;
+      const lon = MAP_CONFIG.realWorldBounds.west + (lonPercent * MAP_CONFIG.lonSpan);
+
+      const latPercent = imageY / MAP_CONFIG.imageHeight;
+      const lat = MAP_CONFIG.realWorldBounds.north - (latPercent * MAP_CONFIG.latSpan);
+
+      return { lat, lon };
+    }
+
+    window.addEventListener('resize', () => r.resizeDrawingSurfaceToCanvas());
+
+    // Block/unblock interaction helpers
+    function blockRiveInteractions() {
+      interactionBlocker.classList.add('active');
+    }
+    function unblockRiveInteractions() {
+      interactionBlocker.classList.remove('active');
+    }
+
+    // Track pointer and interaction state
+    let pointerStartX = 0, pointerStartY = 0, pointerStartTime = 0;
+    let isPointerDown = false;
+    let hasMoved = false;
+    const centerX = CANVAS_WIDTH / 2;
+    const centerY = CANVAS_HEIGHT / 2;
+
+    container.addEventListener('pointerdown', (e) => {
+      const rect = container.getBoundingClientRect();
+      pointerStartX = e.clientX - rect.left;
+      pointerStartY = e.clientY - rect.top;
+      pointerStartTime = Date.now();
+      isPointerDown = true;
+      hasMoved = false;
+
+      // If elevation visible, reset on click
+      if (isShowingElevation && !resetInProgress) {
+        resetInProgress = true;
+
+        unblockRiveInteractions();
+
+        if (r && r.viewModelInstance) {
+          const isCheckedInput = r.viewModelInstance.boolean('isChecked');
+          if (typeof isCheckedInput !== 'undefined') {
+            r.viewModelInstance.boolean('isChecked', false);
+          }
+        }
+
+        setTimeout(() => {
+          path.style.transition = 'opacity 700ms ease';
+          elevationDisplay.style.transition = 'opacity 700ms ease';
+          elevationBackground.style.transition = 'opacity 700ms ease';
+
+          const markers = document.querySelectorAll('.marker');
+          markers.forEach(marker => marker.style.transition = 'opacity 700ms ease');
+
+          path.style.opacity = '0';
+          elevationDisplay.style.opacity = '0';
+          elevationBackground.style.opacity = '0';
+          markers.forEach(marker => (marker.style.opacity = '0'));
+        }, 50);
+
+        setTimeout(() => {
+          isShowingElevation = false;
+          gpsDisplay.style.opacity = '1';
+
+          const markers = document.querySelectorAll('.marker');
+          markers.forEach(m => m.remove());
+          path.setAttribute('d', '');
+          start = null;
+          end = null;
+          startMarkerElement = null;
+          endMarkerElement = null;
+          startMapPosition = null;
+          endMapPosition = null;
+          isWaitingForSecondMarker = false;
+          mapOffset = { x: 0, y: 0 };
+          mapScale = 1;
+
+          resetInProgress = false;
+        }, 800);
+      }
+    });
+
+    container.addEventListener('pointermove', (e) => {
+      const rect = container.getBoundingClientRect();
+      const currentX = e.clientX - rect.left;
+      const currentY = e.clientY - rect.top;
+
+      if (isPointerDown) {
+        const deltaX = Math.abs(currentX - pointerStartX);
+        const deltaY = Math.abs(currentY - pointerStartY);
+        if (deltaX > MOVEMENT_THRESHOLD || deltaY > MOVEMENT_THRESHOLD) hasMoved = true;
+      }
+
+      if ((startMapPosition || endMapPosition) && !isWaitingForSecondMarker) {
+        const mouseDeltaX = currentX - centerX;
+        const mouseDeltaY = currentY - centerY;
+        const panSensitivity = 0.5;
+        mapOffset.x = mouseDeltaX * panSensitivity;
+        mapOffset.y = mouseDeltaY * panSensitivity;
+        updateMarkerPositions();
+      }
+
+      const gps = pixelToGPS(currentX, currentY);
+      gpsDisplay.textContent = `${gps.lat.toFixed(6)}°, ${gps.lon.toFixed(6)}°`;
+
+      const offsetY = 20;
+      const offsetX = 0;
+      gpsDisplay.style.left = `${e.clientX + offsetX}px`;
+      gpsDisplay.style.top = `${e.clientY - offsetY}px`;
+      gpsDisplay.style.transform = 'translate(-50%, -100%)';
+    });
+
+    container.addEventListener('pointerup', (e) => {
+      if (!isPointerDown) return;
+
+      const rect = container.getBoundingClientRect();
+      const endX = e.clientX - rect.left;
+      const endY = e.clientY - rect.top;
+      const clickDuration = Date.now() - pointerStartTime;
+
+      if (!hasMoved && clickDuration < CLICK_TIME_THRESHOLD) {
+        setTimeout(() => handleMarkerPlacement(endX, endY), 50);
+      }
+
+      isPointerDown = false;
+      hasMoved = false;
+    });
+
+    container.addEventListener('wheel', (e) => {
+      e.preventDefault();
+
+      if (startMapPosition && !isWaitingForSecondMarker) {
+        const rect = container.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+        const newScale = mapScale * zoomFactor;
+
+        if (newScale >= 0.5 && newScale <= 3.0) {
+          const zoomCenterX = mouseX - mapOffset.x;
+          const zoomCenterY = mouseY - mapOffset.y;
+
+          mapScale = newScale;
+          mapOffset.x = mouseX - zoomCenterX * mapScale;
+          mapOffset.y = mouseY - zoomCenterY * mapScale;
+          updateMarkerPositions();
+        }
+      }
+    });
+
+    function updateMarkerPositions() {
+      if (startMapPosition && startMarkerElement) {
+        startMarkerElement.style.left = `${startMapPosition.x + mapOffset.x}px`;
+        startMarkerElement.style.top = `${startMapPosition.y + mapOffset.y}px`;
+      }
+      if (endMapPosition && endMarkerElement) {
+        endMarkerElement.style.left = `${endMapPosition.x + mapOffset.x}px`;
+        endMarkerElement.style.top = `${endMapPosition.y + mapOffset.y}px`;
+      }
+    }
+
+    function handleMarkerPlacement(x, y) {
+      // Check if the click is in the blocked area
+      if (isInBlockedArea(x, y)) {
+        return; // Don't place marker in blocked area
+      }
+
+      logCalibrationInfo(x, y);
+
+      if (!start) {
+        start = { x, y };
+        startMapPosition = { x: x - mapOffset.x, y: y - mapOffset.y };
+        startMarkerElement = addMarker(x, y, 'start');
+
+        isWaitingForSecondMarker = true;
+        blockRiveInteractions();
+
+      } else if (!end) {
+        end = { x, y };
+        endMapPosition = { x: x - mapOffset.x, y: y - mapOffset.y };
+        endMarkerElement = addMarker(x, y, 'end');
+        drawSnakyRoute(start, end);
+        updateElevationDisplay();
+        updateGradientDirection(start, end);
+        animateRouteLineDraw();
+
+        path.addEventListener('transitionend', () => {
+          isShowingElevation = true;
+          gpsDisplay.style.opacity = '0';
+          elevationDisplay.style.opacity = 1;
+          elevationBackground.style.opacity = 1;
+        }, { once: true });
+      }
+    }
+
+    function addMarker(x, y, type) {
+      const marker = document.createElement('div');
+      marker.classList.add('marker', type);
+      marker.style.left = `${x}px`;
+      marker.style.top = `${y}px`;
+      marker.style.transition = 'opacity 700ms ease';
+      container.appendChild(marker);
+      return marker;
+    }
+
+    function updateGradientDirection(start, end) {
+      const gradient = document.getElementById('routeGradient');
+      
+      // Calculate the angle of the line from start to end
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const angle = Math.atan2(dy, dx);
+      
+      // Convert angle to gradient coordinates
+      const x1 = 50 + 50 * Math.cos(angle);
+      const y1 = 50 + 50 * Math.sin(angle);
+      const x2 = 50 - 50 * Math.cos(angle);
+      const y2 = 50 - 50 * Math.sin(angle);
+      
+      gradient.setAttribute('x1', `${x2}%`);
+      gradient.setAttribute('y1', `${y2}%`);
+      gradient.setAttribute('x2', `${x1}%`);
+      gradient.setAttribute('y2', `${y1}%`);
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function perpendicularVector(p1, p2) {
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      return { x: -dy / len, y: dx / len };
+    }
+
+    function catmullRom2bezier(points) {
+      let d = `M${points[0].x},${points[0].y}`;
+      for (let i = 0; i < points.length - 1; i++) {
+        const p0 = i === 0 ? points[0] : points[i - 1];
+        const p1 = points[i];
+        const p2 = points[i + 1];
+        const p3 = (i + 2 < points.length) ? points[i + 2] : points[points.length - 1];
+
+        const cp1x = p1.x + (p2.x - p0.x) / 6;
+        const cp1y = p1.y + (p2.y - p0.y) / 6;
+
+        const cp2x = p2.x - (p3.x - p1.x) / 6;
+        const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+        d += ` C${cp1x},${cp1y} ${cp2x},${cp2y} ${p2.x},${p2.y}`;
+      }
+      return d;
+    }
+
+    function drawSnakyRoute(start, end) {
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      const minPoints = 8;
+      const maxPoints = 30;
+      const threshold = 400;
+      const maxBaseOffset = 70;
+
+      const normalizedDist = Math.min(distance / threshold, 1);
+      const offsetScale = normalizedDist * normalizedDist;
+
+      const baseOffset = maxBaseOffset * offsetScale;
+
+      const numPoints = Math.floor(minPoints + (maxPoints - minPoints) * normalizedDist);
+
+      const perp = perpendicularVector(start, end);
+      const points = [ { x: start.x, y: start.y } ];
+
+      for (let i = 1; i < numPoints - 1; i++) {
+        const t = i / (numPoints - 1);
+        const baseX = lerp(start.x, end.x, t);
+        const baseY = lerp(start.y, end.y, t);
+
+        const jitterAlong = (Math.random() - 0.5) * 20 * offsetScale;
+        const sweepWeight = Math.sin(t * Math.PI * 3) * 0.7 + Math.sin(t * Math.PI * 7) * 0.3;
+        const offsetMag = baseOffset * sweepWeight * (Math.random() * 0.9 + 0.1);
+        const sign = Math.random() > 0.5 ? 1 : -1;
+
+        points.push({
+          x: baseX + perp.x * offsetMag * sign + jitterAlong * dx / distance,
+          y: baseY + perp.y * offsetMag * sign + jitterAlong * dy / distance
+        });
+      }
+
+      points.push({ x: end.x, y: end.y });
+
+      const pathData = catmullRom2bezier(points);
+      path.setAttribute('d', pathData);
+    }
+
+    function animateRouteLineDraw() {
+      const length = path.getTotalLength();
+
+      path.style.transition = 'none';
+      path.style.opacity = '1';
+      path.style.strokeDasharray = length;
+      path.style.strokeDashoffset = length;
+
+      path.getBoundingClientRect();
+
+      path.style.transition = 'stroke-dashoffset 800ms ease';
+      path.style.strokeDashoffset = '0';
+    }
+
+    function xyToElevation(x, y) {
+      const gps = pixelToGPS(x, y);
+
+      const landmarks = MAP_CONFIG.knownLandmarks;
+
+      const distances = landmarks.map(landmark => {
+        const latDiff = gps.lat - landmark.realGPS.lat;
+        const lonDiff = gps.lon - landmark.realGPS.lon;
+        return {
+          landmark,
+          distance: Math.sqrt(latDiff * latDiff + lonDiff * lonDiff)
+        };
+      });
+
+      distances.sort((a, b) => a.distance - b.distance);
+
+      const closestLandmark = distances[0].landmark;
+
+      let elevation = closestLandmark.elevation;
+
+      const terrainFactor = distances[0].distance * 1000;
+      const terrainVariation = Math.sin(gps.lat * 200) * Math.cos(gps.lon * 200) * Math.min(terrainFactor, 800);
+      elevation += terrainVariation;
+
+      elevation = Math.max(elevation, 3900);
+
+      return Math.round(elevation);
+    }
+
+    function logCalibrationInfo(x, y) {
+      const currentGPS = pixelToGPS(x, y);
+      console.log(`Click at canvas (${x}, ${y}) = GPS (${currentGPS.lat.toFixed(6)}, ${currentGPS.lon.toFixed(6)})`);
+
+      const landmarks = MAP_CONFIG.knownLandmarks;
+      const distances = landmarks.map(landmark => {
+        const latDiff = currentGPS.lat - landmark.realGPS.lat;
+        const lonDiff = currentGPS.lon - landmark.realGPS.lon;
+        const distance = Math.sqrt(latDiff * latDiff + lonDiff * lonDiff);
+        return { landmark, distance };
+      });
+
+      distances.sort((a, b) => a.distance - b.distance);
+      const closest = distances[0];
+
+      console.log(`Closest landmark: ${closest.landmark.name}`);
+      console.log(`Expected GPS: (${closest.landmark.realGPS.lat}, ${closest.landmark.realGPS.lon})`);
+      console.log(`Current GPS: (${currentGPS.lat.toFixed(6)}, ${currentGPS.lon.toFixed(6)})`);
+      console.log(`GPS Error: ${(closest.distance * 111000).toFixed(0)} meters`);
+      console.log('---');
+    }
+
+    function updateElevationDisplay() {
+      if (!start || !end) {
+        elevationDisplay.style.opacity = 0;
+        elevationBackground.style.opacity = 0;
+        document.getElementById('start-value').textContent = '';
+        document.getElementById('end-value').textContent = '';
+        document.getElementById('change-value').textContent = '';
+        return;
+      }
+      const elevStart = xyToElevation(start.x, start.y);
+      const elevEnd = xyToElevation(end.x, end.y);
+      const diff = elevEnd - elevStart;
+      const sign = diff >= 0 ? '+' : '–';
+      const diffAbs = Math.abs(diff);
+
+      document.getElementById('start-value').textContent = `${elevStart.toLocaleString()} ft`;
+      document.getElementById('end-value').textContent = `${elevEnd.toLocaleString()} ft`;
+      document.getElementById('change-value').textContent = `${sign}${diffAbs.toLocaleString()} ft`;
+    }
+  </script>
+</body>
+</html>
